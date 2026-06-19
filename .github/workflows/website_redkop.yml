@@ -1,0 +1,97 @@
+name: NexDroid ROM Compiler (Runner)
+
+on:
+  repository_dispatch:
+    types: [build_rom]
+
+jobs:
+  build:
+    name: 🚀 Build ROM
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: 🔄 Checkout Private Source Code
+        uses: actions/checkout@v4
+        with:
+          repository: 'akrty78/akrty78'
+          token: ${{ secrets.OLD_REPO_PAT }}
+
+      - name: 🧹 Ultra-Fast Disk Space Optimization
+        run: |
+          echo "Freeing space..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune --all --force
+          df -h
+
+      - name: 🛠️ Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip zip unzip aria2 jq erofs-utils
+          pip install google-api-python-client google-auth
+          chmod +x bin/*
+
+      - name: ☕ Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: ⚡ Execute Modder Engine
+        id: build
+        env:
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.OLD_REPO_PAT }}
+          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
+          APP_SECRET_TOKEN: ${{ secrets.APP_SECRET_TOKEN }}
+          REQUESTER_CHAT_ID: ${{ github.event.client_payload.chat_id }}
+          NEXDROID_VERSION: ${{ github.event.client_payload.nexdroid_version || '1.05' }}
+          APKS_SELECTED: ${{ github.event.client_payload.apks_selected || 'all' }}
+          IS_PORT: ${{ github.event.client_payload.is_port || '0' }}
+          STOCK_URL: ${{ github.event.client_payload.stock_url || '' }}
+          PORT_FIXES: ${{ github.event.client_payload.port_fixes || 'auto' }}
+        run: |
+          # The script handles the build, upload, AND success notification
+          # We pipe output to both console (tee) and file for logging
+          bash mod.sh "${{ github.event.client_payload.rom_url }}" "${{ github.event.client_payload.mods_selected }}" "${{ github.event.client_payload.build_mode }}" "${{ github.event.client_payload.apks_selected || 'all' }}" 2>&1 | tee build.log
+
+      # --- ERROR HANDLING ---
+      # Only runs if the previous step failed
+      - name: 🚨 Notify Failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          # Capture the last 20 lines of the log for the error message
+          ERROR_LOG=$(tail -n 20 build.log)
+          
+          # Send Professional Error Alert
+          curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage \
+          -d chat_id=${CHAT_ID} \
+          -d parse_mode=Markdown \
+          -d text="❌ *NexDroid Build Failed*
+          
+          ⚠️ _The build process encountered a critical error._
+          
+          📋 *Log Snippet:*
+          \`\`\`
+          $ERROR_LOG
+          \`\`\`
+          
+          🔍 Check GitHub Actions for full details."
