@@ -64,6 +64,7 @@ jobs:
           APKS_SELECTED: ${{ github.event.client_payload.apks_selected || 'all' }}
           IS_PORT: ${{ github.event.client_payload.is_port || '0' }}
           STOCK_URL: ${{ github.event.client_payload.stock_url || '' }}
+          GLOBAL_URL: ${{ github.event.client_payload.global_url || '' }}
           PORT_FIXES: ${{ github.event.client_payload.port_fixes || 'auto' }}
         run: |
           # The script handles the build, upload, AND success notification
