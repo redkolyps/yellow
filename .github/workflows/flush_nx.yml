@@ -29,15 +29,13 @@ jobs:
             goarch: amd64
             msystem: MINGW64
             mingw_arch: x86_64
-            cc: gcc
             output: nexflash/dist/windows/nexflash.exe
             artifact: nexflash-windows
           - os: windows-latest
             goos: windows
             goarch: 386
-            msystem: CLANG32
-            mingw_arch: clang-i686
-            cc: clang
+            msystem: MINGW32
+            mingw_arch: i686
             output: nexflash/dist/windows-x86/nexflash.exe
             artifact: nexflash-windows-x86
           - os: macos-latest
@@ -68,14 +66,69 @@ jobs:
         if: matrix.goos == 'darwin'
         run: brew install libusb
 
-      - name: Setup MSYS2 (Windows)
-        if: matrix.goos == 'windows'
+      - name: Setup MSYS2 (Windows 64-bit)
+        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: ${{ matrix.msystem }}
+          msystem: MINGW64
           update: true
-          install: mingw-w64-${{ matrix.mingw_arch }}-${{ matrix.cc }} mingw-w64-${{ matrix.mingw_arch }}-pkgconf mingw-w64-${{ matrix.mingw_arch }}-libusb
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf mingw-w64-x86_64-libusb
           path-type: inherit
+
+      - name: Setup MSYS2 (Windows 32-bit)
+        if: matrix.goos == 'windows' && matrix.goarch == '386'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: mingw-w64-i686-gcc mingw-w64-i686-pkgconf
+          path-type: inherit
+
+      - name: Download libusb 32-bit (Windows x86)
+        if: matrix.goos == 'windows' && matrix.goarch == '386'
+        shell: msys2 {0}
+        run: |
+          # mingw-w64-i686-libusb was removed from MSYS2 repos.
+          # Download official pre-built 32-bit libusb from GitHub releases instead.
+          LIBUSB_VER="1.0.27"
+          curl -fsSL "https://github.com/libusb/libusb/releases/download/v${LIBUSB_VER}/libusb-${LIBUSB_VER}.7z" -o /tmp/libusb.7z
+          7z x /tmp/libusb.7z -o/tmp/libusb -y
+          # Copy headers and 32-bit libs into the MINGW32 sysroot so pkgconf finds them
+          cp /tmp/libusb/include/libusb-1.0/libusb.h /mingw32/include/ 2>/dev/null || \
+            cp /tmp/libusb/libusb-1.0/libusb.h /mingw32/include/ 2>/dev/null || true
+          mkdir -p /mingw32/include/libusb-1.0
+          cp /tmp/libusb/include/libusb-1.0/libusb.h /mingw32/include/libusb-1.0/ 2>/dev/null || \
+            cp /tmp/libusb/libusb-1.0/libusb.h /mingw32/include/libusb-1.0/ 2>/dev/null || true
+          # Find and copy the MinGW32 .dll.a (import lib) and .dll
+          find /tmp/libusb -name "libusb-1.0.dll.a" -path "*mingw*" -path "*x86*" -exec cp {} /mingw32/lib/ \; 2>/dev/null || \
+            find /tmp/libusb -name "libusb-1.0.dll.a" -path "*32*" -exec cp {} /mingw32/lib/ \; 2>/dev/null || true
+          find /tmp/libusb -name "libusb-1.0.dll" -path "*mingw*" -path "*x86*" -exec cp {} /mingw32/bin/ \; 2>/dev/null || \
+            find /tmp/libusb -name "libusb-1.0.dll" -path "*32*" -exec cp {} /mingw32/bin/ \; 2>/dev/null || true
+          # Create a pkg-config .pc file so CGO can find libusb
+          cat > /mingw32/lib/pkgconfig/libusb-1.0.pc << 'PCEOF'
+          prefix=/mingw32
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include/libusb-1.0
+          Name: libusb-1.0
+          Description: C API for USB device access from Windows userspace
+          Version: 1.0.27
+          Libs: -L${libdir} -lusb-1.0
+          Cflags: -I${includedir}
+          PCEOF
+          echo "--- Verifying libusb 32-bit setup ---"
+          ls -la /mingw32/lib/libusb* /mingw32/bin/libusb* /mingw32/include/libusb-1.0/ 2>/dev/null || true
+          pkgconf --cflags --libs libusb-1.0 || true
+
+      - name: Embed app icon (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        working-directory: nexflash/go
+        run: |
+          python -m pip install --quiet pillow
+          python -c "from PIL import Image; Image.open('../icon.png').save('icon.ico', sizes=[(256,256),(64,64),(48,48),(32,32),(16,16)])"
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+          "$(go env GOPATH)/bin/goversioninfo" -o resource_windows.syso versioninfo.json
 
       - name: Build (Windows)
         if: matrix.goos == 'windows'
@@ -83,7 +136,6 @@ jobs:
         shell: msys2 {0}
         run: |
           export PKG_CONFIG=pkgconf
-          export CC=${{ matrix.cc }}
           OUTDIR="../../$( dirname '${{ matrix.output }}' )"
           go mod tidy
           mkdir -p "$OUTDIR"
