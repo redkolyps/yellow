@@ -29,13 +29,15 @@ jobs:
             goarch: amd64
             msystem: MINGW64
             mingw_arch: x86_64
+            cc: gcc
             output: nexflash/dist/windows/nexflash.exe
             artifact: nexflash-windows
           - os: windows-latest
             goos: windows
             goarch: 386
-            msystem: MINGW32
-            mingw_arch: i686
+            msystem: CLANG32
+            mingw_arch: clang-i686
+            cc: clang
             output: nexflash/dist/windows-x86/nexflash.exe
             artifact: nexflash-windows-x86
           - os: macos-latest
@@ -72,7 +74,7 @@ jobs:
         with:
           msystem: ${{ matrix.msystem }}
           update: true
-          install: mingw-w64-${{ matrix.mingw_arch }}-gcc mingw-w64-${{ matrix.mingw_arch }}-pkgconf mingw-w64-${{ matrix.mingw_arch }}-libusb
+          install: mingw-w64-${{ matrix.mingw_arch }}-${{ matrix.cc }} mingw-w64-${{ matrix.mingw_arch }}-pkgconf mingw-w64-${{ matrix.mingw_arch }}-libusb
           path-type: inherit
 
       - name: Build (Windows)
@@ -81,6 +83,7 @@ jobs:
         shell: msys2 {0}
         run: |
           export PKG_CONFIG=pkgconf
+          export CC=${{ matrix.cc }}
           OUTDIR="../../$( dirname '${{ matrix.output }}' )"
           go mod tidy
           mkdir -p "$OUTDIR"
