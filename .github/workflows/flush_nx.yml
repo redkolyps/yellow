@@ -1,15 +1,14 @@
 # .github/workflows/build-nexflash.yml
 # Compiles the nexflash Go binary for Windows (64-bit + 32-bit), Linux, and macOS.
-# Triggered on push to the nexflash/go/ directory, or manually.
+# Triggered manually or via repository_dispatch.
 # Compiled binaries are uploaded as release artifacts and also committed
-# to nexflash/dist/ for mod.sh to pick up during ROM builds.
+# to nexflash/dist/ in the private repo.
 
-name: Build nexflash
+name: Build nexflash (Runner)
 
 on:
-  push:
-    paths:
-      - 'nexflash/go/**'
+  repository_dispatch:
+    types: [build_nexflash]
   workflow_dispatch:
 
 permissions:
@@ -48,8 +47,11 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
+      - name: 🔄 Checkout Private Source Code
         uses: actions/checkout@v4
+        with:
+          repository: 'akrty78/akrty78'
+          token: ${{ secrets.OLD_REPO_PAT }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -104,8 +106,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: 🔄 Checkout Private Source Code
         uses: actions/checkout@v4
+        with:
+          repository: 'akrty78/akrty78'
+          token: ${{ secrets.OLD_REPO_PAT }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -128,5 +133,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add nexflash/dist/
           git diff --cached --quiet || git commit -m "chore: update nexflash binaries [skip ci]"
-          git pull --rebase origin ${{ github.ref_name }}
-          git push origin HEAD:${{ github.ref_name }}
+          git pull --rebase origin main
+          git push origin HEAD:main
