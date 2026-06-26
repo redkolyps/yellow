@@ -1,0 +1,137 @@
+# .github/workflows/build-nexflash.yml
+# Compiles the nexflash Go binary for Windows (64-bit + 32-bit), Linux, and macOS.
+# Triggered manually or via repository_dispatch.
+# Compiled binaries are uploaded as release artifacts and also committed
+# to nexflash/dist/ in the private repo.
+
+name: Build nexflash (Runner)
+
+on:
+  repository_dispatch:
+    types: [build_nexflash]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            output: nexflash/dist/linux/nexflash
+            artifact: nexflash-linux
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            msystem: MINGW64
+            mingw_arch: x86_64
+            output: nexflash/dist/windows/nexflash.exe
+            artifact: nexflash-windows
+          - os: windows-latest
+            goos: windows
+            goarch: 386
+            msystem: MINGW32
+            mingw_arch: i686
+            output: nexflash/dist/windows-x86/nexflash.exe
+            artifact: nexflash-windows-x86
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            output: nexflash/dist/macos/nexflash
+            artifact: nexflash-macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: 🔄 Checkout Private Source Code
+        uses: actions/checkout@v4
+        with:
+          repository: 'akrty78/akrty78'
+          token: ${{ secrets.OLD_REPO_PAT }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install libusb (Linux)
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0-dev
+
+      - name: Install libusb (macOS)
+        if: matrix.goos == 'darwin'
+        run: brew install libusb
+
+      - name: Setup MSYS2 (Windows)
+        if: matrix.goos == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: mingw-w64-${{ matrix.mingw_arch }}-gcc mingw-w64-${{ matrix.mingw_arch }}-pkgconf mingw-w64-${{ matrix.mingw_arch }}-libusb
+          path-type: inherit
+
+      - name: Build (Windows)
+        if: matrix.goos == 'windows'
+        working-directory: nexflash/go
+        shell: msys2 {0}
+        run: |
+          export PKG_CONFIG=pkgconf
+          OUTDIR="../../$( dirname '${{ matrix.output }}' )"
+          go mod tidy
+          mkdir -p "$OUTDIR"
+          CGO_ENABLED=1 GOOS=windows GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -trimpath -o "../../${{ matrix.output }}" .
+          cp /$( echo '${{ matrix.msystem }}' | tr '[:upper:]' '[:lower:]' )/bin/libusb-1.0.dll "$OUTDIR/" || true
+
+      - name: Build (Unix)
+        if: matrix.goos != 'windows'
+        working-directory: nexflash/go
+        shell: bash
+        run: |
+          go mod tidy
+          mkdir -p ../dist/${{ matrix.goos == 'darwin' && 'macos' || matrix.goos }}
+          CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -trimpath -o ../../${{ matrix.output }} .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.goos == 'windows' && format('nexflash/dist/{0}', matrix.goarch == '386' && 'windows-x86' || 'windows') || matrix.goos == 'darwin' && 'nexflash/dist/macos' || format('nexflash/dist/{0}', matrix.goos) }}/
+
+  commit-binaries:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔄 Checkout Private Source Code
+        uses: actions/checkout@v4
+        with:
+          repository: 'akrty78/akrty78'
+          token: ${{ secrets.OLD_REPO_PAT }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Place binaries in dist
+        run: |
+          mkdir -p nexflash/dist/windows nexflash/dist/windows-x86 nexflash/dist/linux nexflash/dist/macos
+          cp artifacts/nexflash-windows/* nexflash/dist/windows/ 2>/dev/null || true
+          cp artifacts/nexflash-windows-x86/* nexflash/dist/windows-x86/ 2>/dev/null || true
+          cp artifacts/nexflash-linux/* nexflash/dist/linux/ 2>/dev/null || true
+          cp artifacts/nexflash-macos/* nexflash/dist/macos/ 2>/dev/null || true
+          chmod +x nexflash/dist/linux/nexflash 2>/dev/null || true
+          chmod +x nexflash/dist/macos/nexflash 2>/dev/null || true
+
+      - name: Commit binaries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add nexflash/dist/
+          git diff --cached --quiet || git commit -m "chore: update nexflash binaries [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
