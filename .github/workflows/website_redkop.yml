@@ -67,13 +67,16 @@ jobs:
           STOCK_URL: ${{ github.event.client_payload.stock_url || '' }}
           GLOBAL_URL: ${{ github.event.client_payload.global_url || '' }}
           PORT_FIXES: ${{ github.event.client_payload.port_fixes || 'auto' }}
-          MT_SMALI_ONLY_JSON: ${{ github.event.client_payload.patch_jsons || '__origin_no_patches__' }}
         run: |
           # The public runner checks out the private engine above. Origin has no
           # CF-worker key path and always invokes the shared engine through origin.sh.
+          # NOTE: MT_SMALI_ONLY_JSON is set ONLY in the origin branch — leaving it unset
+          # for build_rom preserves the normal build (mt_smali applies every JSON).
           set -o pipefail
           if [ "${{ github.event.action }}" = "build_origin" ]; then
-            ORIGIN_MODE=1 CF_WORKER_URL= APP_SECRET_TOKEN= bash origin.sh "${{ github.event.client_payload.rom_url }}" "${{ github.event.client_payload.mods_selected }}" hybrid all 2>&1 | tee build.log
+            MT_SMALI_ONLY_JSON="${{ github.event.client_payload.patch_jsons }}" \
+            ORIGIN_MODE=1 CF_WORKER_URL= APP_SECRET_TOKEN= \
+            bash origin.sh "${{ github.event.client_payload.rom_url }}" "${{ github.event.client_payload.mods_selected }}" hybrid all 2>&1 | tee build.log
           else
             bash mod.sh "${{ github.event.client_payload.rom_url }}" "${{ github.event.client_payload.mods_selected }}" "${{ github.event.client_payload.build_mode }}" "${{ github.event.client_payload.apks_selected || 'all' }}" 2>&1 | tee build.log
           fi
