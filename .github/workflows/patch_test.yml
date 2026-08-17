@@ -1,0 +1,117 @@
+name: NexDroid Patch Test (Runner)
+
+# Standalone single-apk smali test. Nothing here touches the ROM pipeline
+# (build_rom.yml): no repack, no super.img, no firmware/vbmeta, no ROM upload.
+#
+# RUNNER LAYOUT — same split as the ROM compiler (website_redkop.yml):
+# this file is meant to live in the PUBLIC dummy repo (redkolyps/yellow) and it
+# checks out the PRIVATE engine (akrty78/akrty78) into the workspace before
+# running anything. That burns the dummy account's Actions minutes instead of the
+# engine repo's, and keeps the engine source off the public runner's history.
+# The copy kept here in the engine repo is the source of truth to edit; mirror it
+# to the dummy repo after changing it.
+#
+# Fired by the bot's "🧪 Patch Test" button (bot.py -> trigger_patch_test, which
+# dispatches to ROM_REPO_NAME with NEW_REPO_PAT), or manually from the Actions tab.
+#
+# Secrets required on the dummy repo — all four are already there for the ROM
+# runner: OLD_REPO_PAT, TELEGRAM_TOKEN, CHAT_ID.
+#   OLD_REPO_PAT  akrty78 account PAT. Does double duty: checks out the private
+#                 engine AND is handed to patch_test.sh as GITHUB_TOKEN, which is
+#                 what lets `gh release upload` write the TestApks release on
+#                 akrty78/akrty78 (PT_REPO is hardcoded there on purpose — the
+#                 patched apks stay on the engine repo, not the dummy one).
+on:
+  repository_dispatch:
+    types: [patch_test]
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: 'OTA zip URL'
+        required: true
+        type: string
+      partition:
+        description: 'Partition holding the target'
+        required: true
+        type: choice
+        options: [product, system, system_ext, mi_ext, vendor, odm]
+      target:
+        description: 'Target file name (e.g. MiuiHome.apk)'
+        required: true
+        type: string
+      only_json:
+        description: 'mt_smali JSON stems, comma-separated. Empty = all JSONs.'
+        required: false
+        type: string
+
+jobs:
+  patch-test:
+    name: 🧪 Patch Test
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+    permissions:
+      contents: write
+
+    steps:
+      # Pulls the private engine (patch_test.sh + bin/ + mt_smali/) into the
+      # workspace root, exactly like the ROM runner. Everything downstream is
+      # repo-relative, so no path changes are needed.
+      - name: 🔄 Checkout Private Engine
+        uses: actions/checkout@v4
+        with:
+          repository: 'akrty78/akrty78'
+          token: ${{ secrets.OLD_REPO_PAT }}
+
+      - name: 🧹 Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: ☕ Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # apt deps (python3 jq aria2 zip unzip erofs-utils erofsfuse) are installed
+      # by patch_test.sh itself, so there is no setup step here — see PT_SKIP_APT.
+      - name: 🧪 Run Patch Test
+        env:
+          GITHUB_TOKEN: ${{ secrets.OLD_REPO_PAT }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id || secrets.CHAT_ID }}
+          ROM_URL: ${{ github.event.client_payload.rom_url || github.event.inputs.rom_url }}
+          PT_PARTITION: ${{ github.event.client_payload.partition || github.event.inputs.partition }}
+          PT_TARGET: ${{ github.event.client_payload.target || github.event.inputs.target }}
+          MT_SMALI_ONLY_JSON: ${{ github.event.client_payload.only_json || github.event.inputs.only_json || '' }}
+        run: |
+          set -o pipefail
+          chmod +x bin/* patch_test.sh || true
+          bash patch_test.sh 2>&1 | tee patch_test.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: 🚨 Notify Failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id || secrets.CHAT_ID }}
+          PT_PARTITION: ${{ github.event.client_payload.partition || github.event.inputs.partition }}
+          PT_TARGET: ${{ github.event.client_payload.target || github.event.inputs.target }}
+        run: |
+          # Body goes through a file so a log tail containing backticks, quotes or
+          # % signs can't break the shell or the URL encoding.
+          ERR=$(tail -n 25 patch_test.log 2>/dev/null || echo "no log produced")
+          {
+            printf '%s\n\n' '❌ *Patch Test Failed*'
+            printf '🧩 %s · %s\n\n' "$PT_PARTITION" "$PT_TARGET"
+            printf '```\n%s\n```\n' "$ERR"
+          } > tg_msg.txt
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" -d parse_mode=Markdown \
+            --data-urlencode "text@tg_msg.txt" || true
