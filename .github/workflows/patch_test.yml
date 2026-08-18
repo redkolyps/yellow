@@ -43,6 +43,12 @@ on:
         description: 'mt_smali JSON stems, comma-separated. Empty = all JSONs.'
         required: false
         type: string
+      android_major:
+        description: 'Android major of the target ROM (16 = HyperOS3, 17 = HyperOS4). Drives which mt_smali/a<major>/ patches apply.'
+        required: false
+        default: '17'
+        type: choice
+        options: ['16', '17']
 
 jobs:
   patch-test:
@@ -90,6 +96,7 @@ jobs:
           PT_PARTITION: ${{ github.event.client_payload.partition || github.event.inputs.partition }}
           PT_TARGET: ${{ github.event.client_payload.target || github.event.inputs.target }}
           MT_SMALI_ONLY_JSON: ${{ github.event.client_payload.only_json || github.event.inputs.only_json || '' }}
+          BUILD_ANDROID_MAJOR: ${{ github.event.client_payload.android_major || github.event.inputs.android_major || '' }}
         run: |
           set -o pipefail
           chmod +x bin/* patch_test.sh || true
