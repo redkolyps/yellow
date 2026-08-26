@@ -23,7 +23,7 @@ name: NexDroid Patch Test (Runner)
 #                 patched apks stay on the engine repo, not the dummy one).
 on:
   repository_dispatch:
-    types: [patch_test]
+    types: [patch_test, patch_test_rust]
   workflow_dispatch:
     inputs:
       rom_url:
@@ -97,6 +97,10 @@ jobs:
           PT_TARGET: ${{ github.event.client_payload.target || github.event.inputs.target }}
           MT_SMALI_ONLY_JSON: ${{ github.event.client_payload.only_json || github.event.inputs.only_json || '' }}
           BUILD_ANDROID_MAJOR: ${{ github.event.client_payload.android_major || github.event.inputs.android_major || '' }}
+          # Rust launcher path (event_type patch_test_rust): PT_MODE=the dispatch
+          # action; MT_RUST_ONLY_JSON reuses the same only_json payload field.
+          PT_MODE: ${{ github.event.action }}
+          MT_RUST_ONLY_JSON: ${{ github.event.client_payload.only_json || '' }}
         run: |
           set -o pipefail
           chmod +x bin/* patch_test.sh || true
