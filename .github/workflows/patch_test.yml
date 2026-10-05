@@ -21,6 +21,11 @@ name: NexDroid Patch Test (Runner)
 #                 what lets `gh release upload` write the TestApks release on
 #                 akrty78/akrty78 (PT_REPO is hardcoded there on purpose — the
 #                 patched apks stay on the engine repo, not the dummy one).
+#
+# RUNNER PIN: runs-on is ubuntu-24.04, not ubuntu-latest. `ubuntu-latest`
+# migrates to Ubuntu 26 starting 2026-10-19, which could change apt package
+# versions (erofs-utils/erofsfuse) and glibc under the bin/ binaries. Move to
+# 26 deliberately, after testing, not by label drift.
 on:
   repository_dispatch:
     types: [patch_test, patch_test_rust]
@@ -53,7 +58,7 @@ on:
 jobs:
   patch-test:
     name: 🧪 Patch Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       LANG: C.UTF-8
