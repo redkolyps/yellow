@@ -21,14 +21,9 @@ name: NexDroid Patch Test (Runner)
 #                 what lets `gh release upload` write the TestApks release on
 #                 akrty78/akrty78 (PT_REPO is hardcoded there on purpose — the
 #                 patched apks stay on the engine repo, not the dummy one).
-#
-# RUNNER PIN: runs-on is ubuntu-24.04, not ubuntu-latest. `ubuntu-latest`
-# migrates to Ubuntu 26 starting 2026-10-19, which could change apt package
-# versions (erofs-utils/erofsfuse) and glibc under the bin/ binaries. Move to
-# 26 deliberately, after testing, not by label drift.
 on:
   repository_dispatch:
-    types: [patch_test, patch_test_rust]
+    types: [patch_test, patch_test_rust, dump_apk]
   workflow_dispatch:
     inputs:
       rom_url:
@@ -36,16 +31,20 @@ on:
         required: true
         type: string
       partition:
-        description: 'Partition holding the target'
-        required: true
+        description: 'Partition holding the target (ignored in dump mode)'
+        required: false
         type: choice
         options: [product, system, system_ext, mi_ext, vendor, odm]
       target:
-        description: 'Target file name (e.g. MiuiHome.apk)'
-        required: true
+        description: 'Target file name (e.g. MiuiHome.apk) — patch mode only'
+        required: false
         type: string
       only_json:
         description: 'mt_smali JSON stems, comma-separated. Empty = all JSONs.'
+        required: false
+        type: string
+      dump_packages:
+        description: 'Dump mode only: package ids to pull as stock apks, comma-separated (e.g. com.miui.home,com.android.settings).'
         required: false
         type: string
       android_major:
@@ -54,11 +53,17 @@ on:
         default: '17'
         type: choice
         options: ['16', '17']
+      multilang:
+        description: 'Also bake global-ROM languages into the selected apk(s) (1 = on). A16 uses APKEditor, A17 uses ArscLangMerge.'
+        required: false
+        default: '0'
+        type: choice
+        options: ['0', '1']
 
 jobs:
   patch-test:
     name: 🧪 Patch Test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       LANG: C.UTF-8
@@ -102,10 +107,16 @@ jobs:
           PT_TARGET: ${{ github.event.client_payload.target || github.event.inputs.target }}
           MT_SMALI_ONLY_JSON: ${{ github.event.client_payload.only_json || github.event.inputs.only_json || '' }}
           BUILD_ANDROID_MAJOR: ${{ github.event.client_payload.android_major || github.event.inputs.android_major || '' }}
+          PT_MULTILANG: ${{ github.event.client_payload.multilang || github.event.inputs.multilang || '0' }}
           # Rust launcher path (event_type patch_test_rust): PT_MODE=the dispatch
           # action; MT_RUST_ONLY_JSON reuses the same only_json payload field.
-          PT_MODE: ${{ github.event.action }}
+          # Dump path (event_type dump_apk): PT_MODE=dump_apk, DUMP_PACKAGES carries
+          # the comma-separated package ids; partition/target are ignored. For a
+          # manual (workflow_dispatch) run there is no event.action, so fall back to
+          # dump_apk when dump_packages was filled in, else patch_test.
+          PT_MODE: ${{ github.event.action || (github.event.inputs.dump_packages && 'dump_apk') || 'patch_test' }}
           MT_RUST_ONLY_JSON: ${{ github.event.client_payload.only_json || '' }}
+          DUMP_PACKAGES: ${{ github.event.client_payload.dump_packages || github.event.inputs.dump_packages || '' }}
         run: |
           set -o pipefail
           chmod +x bin/* patch_test.sh || true
