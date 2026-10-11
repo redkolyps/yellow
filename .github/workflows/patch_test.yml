@@ -83,37 +83,27 @@ jobs:
 
       # ── EXPERIMENTAL PATCH JSONS (patch-lab branch) — PATCH-TEST ONLY ──────────
       # Keep main's mt_smali/ stable: develop risky JSONs on the `patch-lab` branch
-      # (add them under mt_smali/a17/ or a16/). This step overlays that branch's
-      # mt_smali/ ON TOP of main here in the runner, and folds its JSON stems into
-      # the active set — so Patch APK applies them without them being on main.
-      #   • ROM builds use a DIFFERENT workflow (build_rom / website_redkop) with no
-      #     overlay step, so modding never sees experimental JSONs. 100% isolated.
-      #   • Only runs for the patch_test path (not rust / not dump).
-      #   • continue-on-error: a missing branch or git hiccup must never fail a run.
-      #   • When done testing, just merge patch-lab → main; this becomes a no-op.
+      # (under mt_smali/a17/ or a16/). This overlays that branch's mt_smali/ ON TOP
+      # of main here in the runner so the files are on disk — but it does NOT force
+      # them on. Which JSONs actually run is driven purely by MT_SMALI_ONLY_JSON
+      # (your selection in the bot's Patch-APK JSON picker, which is branch-aware).
+      #   • ROM builds use a DIFFERENT workflow (no overlay) → never see these. Isolated.
+      #   • Skipped for rust / dump (they don't use mt_smali).
+      #   • continue-on-error: a missing branch or git hiccup never fails a run.
+      #   • When done testing, merge patch-lab → main and this becomes a no-op.
       - name: 🧪 Overlay experimental patch JSONs (patch-lab)
+        if: github.event.action != 'dump_apk' && github.event.action != 'patch_test_rust'
         continue-on-error: true
         env:
-          BASE_ONLY: ${{ github.event.client_payload.only_json || github.event.inputs.only_json || '' }}
-          IS_PATCH: ${{ (github.event.action == 'patch_test' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dump_packages == '')) && 'yes' || 'no' }}
           EXP_BRANCH: patch-lab
         run: |
-          FINAL="$BASE_ONLY"
-          if [ "$IS_PATCH" = "yes" ] && git fetch --depth=1 origin "$EXP_BRANCH" 2>/dev/null; then
-            mapfile -t EXPF < <(git ls-tree -r --name-only "origin/$EXP_BRANCH" -- mt_smali 2>/dev/null | grep -E '/.+\.json$' || true)
-            if [ "${#EXPF[@]}" -gt 0 ]; then
-              git checkout "origin/$EXP_BRANCH" -- mt_smali 2>/dev/null || true
-              STEMS=$(printf '%s\n' "${EXPF[@]}" | sed 's#.*/##; s#\.json$##' | sort -u | paste -sd, -)
-              echo "✅ overlaid experimental JSON stems from $EXP_BRANCH: $STEMS"
-              # Empty base = all JSONs already run (incl. exp). Non-empty = union exp in.
-              [ -n "$BASE_ONLY" ] && FINAL="$BASE_ONLY,$STEMS"
-            else
-              echo "ℹ️ $EXP_BRANCH has no mt_smali JSONs — nothing to overlay"
-            fi
+          if git fetch --depth=1 origin "$EXP_BRANCH" 2>/dev/null; then
+            git checkout "origin/$EXP_BRANCH" -- mt_smali 2>/dev/null \
+              && echo "✅ overlaid mt_smali/ from $EXP_BRANCH (experimental JSONs on disk; only the picked ones run)" \
+              || echo "ℹ️ nothing to overlay from $EXP_BRANCH"
           else
-            echo "ℹ️ experimental overlay skipped (not patch-test, or $EXP_BRANCH absent)"
+            echo "ℹ️ $EXP_BRANCH branch absent — skipping overlay"
           fi
-          echo "MT_SMALI_ONLY_JSON=$FINAL" >> "$GITHUB_ENV"
 
       - name: 🧹 Free Disk Space
         run: |
@@ -139,8 +129,10 @@ jobs:
           ROM_URL: ${{ github.event.client_payload.rom_url || github.event.inputs.rom_url }}
           PT_PARTITION: ${{ github.event.client_payload.partition || github.event.inputs.partition }}
           PT_TARGET: ${{ github.event.client_payload.target || github.event.inputs.target }}
-          # MT_SMALI_ONLY_JSON is NOT set here — the "Overlay experimental patch JSONs"
-          # step computes it (base selection + any patch-lab stems) into $GITHUB_ENV.
+          # Only the JSON stems you picked in the bot (branch-aware picker) run. The
+          # overlay step above only puts patch-lab's files on disk; it does NOT force
+          # them on — so a selected experimental stem applies, others don't.
+          MT_SMALI_ONLY_JSON: ${{ github.event.client_payload.only_json || github.event.inputs.only_json || '' }}
           BUILD_ANDROID_MAJOR: ${{ github.event.client_payload.android_major || github.event.inputs.android_major || '' }}
           PT_MULTILANG: ${{ github.event.client_payload.multilang || github.event.inputs.multilang || '0' }}
           # Rust launcher path (event_type patch_test_rust): PT_MODE=the dispatch
